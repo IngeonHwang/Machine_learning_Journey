@@ -1,0 +1,619 @@
+---
+title: "A realistic analytics project about bank direct marketing"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+First of all, we load some of the required packages and import our dataset. Assigning the data set to "bank"
+
+```{r bank marketing}
+
+library(dplyr)
+library(tidyverse) 
+library(caret)  # Load Caret package for computing Confusion matrix
+library(e1071) # Load e1071 package for svm (build our SVM model)
+library(pROC) 
+library(ggplot2) 
+library(DataExplorer)
+library(ROSE)
+
+
+rm(list=ls())
+bank <- read.csv("bank-full.csv", header = TRUE, sep=";")
+```
+
+### Data Preparation
+
+Explore and prepare our data.
+
+* Check the structure of our dataset 
+
+* Check the summary of our dataset.
+```{r}
+# Display the structure of the dataset
+str(bank)
+
+# Display the summary of the dataset
+summary(bank)
+```
+
+* Cheking the missing values
+
+```{r}
+plot_missing(bank)
+```
+
+* Check the unknown value
+```{r}
+sum(is.na(bank))
+
+bank %>% 
+  summarise_all(list(~sum(. == "unknown"))) %>% 
+  gather(key = "variable", value = "nr_unknown") %>% 
+  arrange(-nr_unknown)
+```
+
+* exlpore the data set through bar chart
+```{r}
+plot_bar(bank,nrow=2,ncol=2)
+```
+
+* Check correlation
+```{r}
+plot_correlation(na.omit(bank), type = "c")
+
+```
+
+* Plot the bar graph (job)
+```{r}
+ggplot(data=bank, aes(x= job)) + geom_bar(col ='blue', fill='white') + theme(axis.title = element_text(face = "bold", size = 10, color = "black")) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 )) + ylim(0,10000)
+```
+
+* Check the ages range
+```{r}
+bank %>% 
+  ggplot() +
+  aes(x = age) +
+  geom_bar() +
+  geom_vline(xintercept = c(30, 60), 
+             col = "red",
+             linetype = "dashed") +
+  facet_grid(y ~ .,
+             scales = "free_y") +
+  scale_x_continuous(breaks = seq(0, 100, 5))
+```
+
+Elderly persons represent 7.77% of observations who accepted to subscribe.
+```{r}
+
+bank%>% 
+  mutate(elder60 = if_else(age > 60, "1", "0")) %>% 
+  group_by(y) %>% 
+  add_count(nr_y = n()) %>% 
+  group_by(elder60, y) %>% 
+  summarise(abs_freq = n(),
+            relative_freq = round(100*n()/first(nr_y), 2))
+
+```
+
+
+**Dealing with missing data, Dropping outliers and Transforming the data into a form that is ready for modelling**
+
+Changing the target variable name to class
+```{r}
+
+names(bank)[names(bank) == "y"] <- c("class") 
+str(bank)
+```
+
+```{r}
+# Basic scatter plot of account balance in relation to age
+ggplot(bank, aes(x= age, y= balance)) + geom_point() +
+labs(title="customer age \n in relation to account balance",
+       x="Customer Age", y = "Balance (EUR)") 
+
+```
+
+
+Removing outliers from the balance to increase our model's accuracy by using IQR rule
+In this case, we use 3*IQR to get rid of Extreme outliers
+```{r}
+qnt_balance = quantile(bank$balance, probs=c(.25, .75))
+iqt_balance = 3 * IQR(bank$balance)
+lower_balance <- qnt_balance[1] - iqt_balance
+upper_balance <- qnt_balance[2] + iqt_balance
+ 
+bank <- subset(bank, bank$balance < upper_balance & bank$balance > lower_balance)
+summary(bank)
+
+```
+
+Testing "duration" for outliers in the same way.
+```{r}
+# Basic scatter plot of previous campaign call duration in relation to age
+ggplot(bank, aes(x= age, y= duration)) + geom_point() +
+labs(title="customer age \n in relation to last contact duration",
+       x="Customer Age", y = "Duration (seconds)") 
+
+```
+
+Removing outliers from the duration to increase our model's accuracy by using IQR rule
+```{r}
+qnt_duration = quantile(bank$duration, probs=c(.25, .75))
+iqt_duration = 3 * IQR(bank$duration)
+lower_duration <- qnt_duration[1] - iqt_duration
+upper_duration <- qnt_duration[2] + iqt_duration
+ 
+bank <- subset(bank, bank$duration < upper_duration & bank$balance > lower_duration)
+summary(bank)
+
+```
+
+Testing "campaign" for outliers in the same way.
+```{r}
+# Basic scatter plot of number of current campaign calls in relation to age
+ggplot(bank, aes(x= age, y= campaign)) + geom_point() +
+labs(title="customer age \n in relation to current number of calls",
+       x="Customer Age", y = "Number of calls") 
+
+```
+
+Removing outliers from the campaign to increase our model's accuracy by using IQR rule
+```{r}
+# Removing outliers from the campaign feature with a value over 60
+ qnt_campaign = quantile(bank$campaign, probs=c(.25, .75))
+ iqt_campaign = 3 * IQR(bank$campaign)
+ lower_campaign <- qnt_campaign[1] - iqt_campaign
+ upper_campaign <- qnt_campaign[2] + iqt_campaign
+ 
+ bank <- subset(bank, bank$campaign < upper_campaign & bank$campaign > lower_campaign)
+ summary(bank)
+
+```
+
+Test "previous" for outliers in the same way.
+```{r}
+# Basic scatter plot of number of contacts performed before this campaign per client in relation to age
+ggplot(bank, aes(x= age, y= previous)) + geom_point() +
+labs(title="customer age in relation to \n previous campaign contacts per client",
+       x="Customer Age", y = "Number of contacts")
+```
+
+Removing outliers from the previous feature with a value over 100
+```{r}
+outliers_previous <- which(bank$previous >= 100 ) 
+print(bank[outliers_previous,])
+
+bank <-bank[-outliers_previous,] 
+```
+
+Using stratified sampling to save executing time
+```{r}
+library (splitstackshape)
+set.seed (123)
+bank.stratified <- stratified(bank, "class" , 0.5)
+
+#view(bank.stratified)
+```
+
+Finding the information gain of all attributes and then selecting the most informative ten attributes. We assign the result to *datamodelling*. We did this process to avoid overfitting problem.(specifically Random Forest Model)
+```{r}
+library(FSelector)
+library(ElemStatLearn)
+attribute_weights <- information.gain(class~., bank.stratified )
+print(attribute_weights)
+filtered_attributes <- cutoff.k(attribute_weights,10)
+print(filtered_attributes)
+
+bank.stratified<- as.data.frame(bank.stratified)
+# Select a subset of the dataset by using filtered_attributes 
+datamodelling <- bank.stratified[filtered_attributes]
+
+# View the first few rows of dataformodelling using head() function
+head(datamodelling)
+
+datamodelling$class <- bank.stratified$class  # Add class column to the filtered dataset for modelling
+
+```
+
+
+Next we will test "pdays" for outliers in the same way.
+```{r}
+# Basic scatter plot of number of days since the client was last contacted from a previous campaign in relation to age
+ggplot(datamodelling, aes(x= age, y= pdays)) + geom_point() +
+labs(title="customer age in relation to \n days since previous campaign contact",
+       x="Customer Age", y = "Days since contact") 
+
+```
+
+
+We decided not to do vectorizing *pdays*
+```{r}
+# pday_levels <- vector(mode = "numeric")
+# for (i in 1:length(bank$pdays)) {
+#    if (bank.stratified$pdays[i]<0){
+#        pday_levels[i] = 0
+#    } else if (bank.stratified$pdays[i]<100){
+#        pday_levels[i] = 1
+#    } else if (bank.stratified$pdays[i]<200){
+#        pday_levels[i] = 2
+#    } else if (bank.stratified$pdays[i]<300){
+#        pday_levels[i] = 3
+#    } else if (bank.stratified$pdays[i]<400){
+#        pday_levels[i] = 4
+#    } else if (bank.stratified$pdays[i]<500){
+#        pday_levels[i] = 5
+#    } else if (bank.stratified$pdays[i]<600){
+#        pday_levels[i] = 6
+#    } else {
+        
+#        pday_levels[i] = 7
+#   }
+# }
+# print(pday_levels)
+# summary(pday_levels)
+# bank.stratified  <- bank.stratified  %>% mutate(pday_levels = pday_levels) 
+```
+
+### Modelling
+
+Build models by using all features in our training dataset.
+Generate our training and test sets and partition the dataset into training (70%) and test (30%) sets.
+```{r}
+library(caTools) # For data partitioning
+set.seed(10)
+split = sample.split(datamodelling$class, SplitRatio = 0.7)
+training = subset(datamodelling , split == TRUE) 
+test = subset(datamodelling , split == FALSE) 
+
+library(ROSE) 
+head(training, 3)
+table(training$class)
+prop.table(table(training$class))
+
+```
+
+We decided not to do oversampling 
+```{r}
+# Data balancing  
+
+#oversampling
+ #oversampled_data <- ovun.sample(class ~. , data = training, method = "over", p= 0.5, seed=1)$data
+ #table(oversampled_data$class)
+
+ #prop.table(table(oversampled_data$class))
+
+#undersampling
+#undersampled_data <- ovun.sample(class ~. , data = training, method = "under", p= 0.5, seed=1)$data
+#table(undersampled_data$class)
+#prop.table(table(undersampled_data$class))
+
+#both
+#bothsampled_data <- ovun.sample(class ~. , data = training, method = "both", p= 0.5, seed=1)$data
+#table(bothsampled_data$class)
+#prop.table(table(bothsampled_data$class))
+```
+
+
+**I.Build a SVM model**
+```{r}
+svm <- svm(class ~ ., data = training, kernel= "radial", probability = TRUE)
+svm_pred <- predict(svm, test, probability = TRUE)
+confusionMatrix(svm_pred, test$class, positive = 'yes')
+```
+
+**II. Build a Logistic Regression model**
+```{r}
+log_reg <- glm(class~., data = training, family = "binomial")
+
+logreg_pred <- predict(log_reg, test, type="response")
+
+logreg_class <- ifelse(logreg_pred > 0.5, "yes", "no")
+logreg_class <- as.factor(logreg_class)
+
+confusionMatrix(logreg_class, test$class, positive='yes', mode = "prec_recall")
+```
+
+**III. Build a Decision tree model**
+```{r}
+library(partykit) # For building decision tree model
+Decision_tree <- ctree(class~., data = training)
+print(Decision_tree)
+
+decisiontree_pred<- predict(Decision_tree, test, type = "response")
+confusionMatrix(decisiontree_pred, test$class, positive='yes')
+```
+
+**IV.Build a NaiveBayes model**
+```{r}
+library(naivebayes) # For building naive bayes model
+NB <- naive_bayes(training$class ~.,data = training)
+NB_pred <- predict(NB,test,probability = TRUE)
+confusionMatrix(NB_pred, test$class, positive='yes')
+
+```
+
+
+**V.Build a Randomforest model**
+```{r}
+
+library(randomForest) # Load randomforest package 
+# Build Random Forest model and assign it to rf_model
+rf_model <- randomForest(class ~ . , data =  training)
+
+# Print our model
+print(rf_model)
+
+# Check the important attributes by using importance() function
+importance(rf_model)
+
+# Predict the classes for the test data
+rf_model_pred <- predict(rf_model, test,type = "response")
+
+# The last argument sets the positive class
+confusionMatrix(rf_model_pred, test$class, positive='yes')
+```
+
+### Evaluation 
+
+Using `predict()` function with an additional argument `type="prob"` to obtain class probabilities.
+Generating input data for the ROC curve.
+
+```{r  message=FALSE}
+# Install.packages("pROC")
+library(pROC) 
+
+# Obtain class prob abilities for SVM
+prob_SVM <- attr(svm_pred, "probabilities")[,2]
+
+# Obtain class probabilities by using predict() and adding type = "prob" for Ctree
+prob_Ctree <- predict(Decision_tree, test, type = "prob")
+
+# Obtain class probabilities by using predict() and adding type = "prob" for Naive Bayes
+prob_NB <- predict(NB, test, type = "prob")
+
+# Obtain class probabilities by using predict() and adding type = "prob" for Random Forest
+prob_RF <- predict(rf_model, test, type = "prob")
+
+```
+
+**SVM**
+```{r}
+# Obtain the ROC curve data for SVM
+ROC_svm <- roc(class ~ prob_SVM, data = test)
+# Extract required data from ROC_SVM
+df_SVM = data.frame((1-ROC_svm$specificities), ROC_svm$sensitivities)
+
+```
+
+**Decision tree**
+```{r  message=FALSE}
+
+# Ctree
+# Obtain the ROC curve data for Decision
+ROC_Ctree <- roc(class ~ prob_Ctree[,2], test)
+
+# Extract required data from ROC_Ctree
+df_Ctree = data.frame((1-ROC_Ctree$specificities), ROC_Ctree$sensitivities)
+
+```
+
+**Logistic Regression**
+```{r}
+
+# Obtain the ROC curve data for Logistic Regression
+ROC_LogReg <- roc(class ~ logreg_pred, data = test)
+# Extract required data from ROC_LogReg
+df_LogReg = data.frame((1-ROC_LogReg$specificities), ROC_LogReg$sensitivities)
+
+
+```
+
+**NaiveBayes model**
+```{r}
+# NaiveBayes model
+# Obtain the ROC curve data for NaiveBayes model
+ROC_NB<- roc(class ~ prob_NB[,2], data = test)
+
+# Extract required data from ROC_NB
+df_NB = data.frame((1-ROC_NB$specificities), ROC_NB$sensitivities)
+
+
+```
+
+**Random Forest**
+```{r  message=FALSE}
+
+# Random Forest
+# Use roc function to return some performance metrics
+ROC_RF <- roc(class ~ prob_RF[,2], test)
+
+#Extract required data from ROC_RF
+df_RF = data.frame((1-ROC_RF$specificities), ROC_RF$sensitivities)
+
+```
+
+***
+
+
+**Checking our model whether it has overfitting problem**
+
+**SVM**
+```{r}
+
+# SVM - predict the class of the test data
+svm_training_pred <- predict(svm, training, probability = TRUE)
+# SVM - test data 
+confusionMatrix(svm_pred, test$class, positive = 'yes')
+# SVM - training data 
+confusionMatrix(svm_training_pred, training$class, positive = 'yes')
+```
+
+**Logistic Regression**
+```{r}
+# Logistic Regression - predict the class of the test data
+logreg_training_pred <- predict(log_reg, training, type="response")
+logreg_class_training <- ifelse(logreg_training_pred > 0.5, "yes", "no")
+logreg_class_training  <- as.factor(logreg_class_training)
+# Logistic Regression - test data 
+confusionMatrix(logreg_class, test$class, positive='yes', mode = "prec_recall")
+# Logistic Regression - training data 
+confusionMatrix(logreg_class_training, training$class, positive='yes', mode = "prec_recall")
+```
+
+**Random Forest**
+```{r}
+# Random Forest - predict the class of the test data 
+rf_training_pred <-  predict(rf_model, training,type = "response")
+# Random Forest - test data 
+confusionMatrix(rf_model_pred, test$class, positive =  'yes')
+# Random Forest - training data 
+confusionMatrix(rf_training_pred, training$class, positive =  'yes')
+```
+
+**Decision tree**
+```{r}
+# Decision tree - predict the class of the test data 
+Ctree_training_pred <-  predict(Decision_tree, training, type = "response")
+# Decision tree - test data 
+confusionMatrix(decisiontree_pred, test$class, positive =  'yes')
+# Decision tree - training data 
+confusionMatrix(Ctree_training_pred, training$class, positive =  'yes')
+```
+
+**NaiveBayes**
+```{r}
+# NaiveBayes - predict the class of the test data
+nb_training_pred <-  predict(NB,training, probability = TRUE)
+# NaiveBayes model - test data 
+confusionMatrix(NB_pred, test$class, positive =  'yes')
+# NaiveBayes model - training data 
+confusionMatrix(nb_training_pred, training$class, positive =  'yes')
+```
+
+*** 
+
+**Comparing ROC curves**
+
+* Plot the ROC curve for Logistic Regression and SVM
+```{r}
+
+plot(df_LogReg, col="red", type="l",                   # adds ROC curve for Logistic Regression  
+xlab="False Positive Rate (1-Specificity)", ylab="True Positive Rate (Sensitivity)")
+lines(df_SVM, col="blue")                             # adds ROC curve for SVM
+abline(a = 0, b = 1, col = "lightgray")                # adds a diagonal line
+legend("bottomright",                                  # add a legend to show model names 
+c("Logistic Regression","SVM"),
+fill=c("red","blue"))
+```
+
+
+* Plot the ROC curve for Logistic Regression and Random forest
+```{r}
+
+plot(df_LogReg, col="red", type="l",                   # adds ROC curve for Logistic Regression  
+xlab="False Positive Rate (1-Specificity)", ylab="True Positive Rate (Sensitivity)")
+lines(df_RF, col="blue")                             # adds ROC curve for Random forest
+abline(a = 0, b = 1, col = "lightgray")                # adds a diagonal line
+legend("bottomright",                                  # add a legend to show model names 
+c("Logistic Regression","Random Forest"),
+fill=c("red","blue"))
+```
+
+
+* Plot the ROC curve for Random forest and Decision tree
+```{r}
+
+plot(df_Ctree, col="red", type="l",                   # adds ROC curve for Decision Tree
+xlab="False Positive Rate (1-Specificity)", ylab="True Positive Rate (Sensitivity)")
+lines(df_RF, col="blue")                             # adds ROC curve for Random forest
+abline(a = 0, b = 1, col = "lightgray")                # adds a diagonal line
+legend("bottomright",                                  # add a legend to show model names 
+c("Decision tree","Random Forest"),
+fill=c("red","blue"))
+```
+
+* Plot the ROC curve for Random forest and NaiveBayes model
+```{r}
+
+plot(df_NB, col="red", type="l",                   # adds ROC curve for NaiveBayes model
+xlab="False Positive Rate (1-Specificity)", ylab="True Positive Rate (Sensitivity)")
+lines(df_RF, col="blue")                             # adds ROC curve for Random forest
+abline(a = 0, b = 1, col = "lightgray")                # adds a diagonal line
+legend("bottomright",                                  # add a legend to show model names 
+c("NaiveBayes","Random Forest"),
+fill=c("red","blue"))
+```
+
+
+
+**Comparing AUC values**
+
+* Compute AUC values for every models by using `auc()` function. 
+```{r  message=FALSE}
+# Calculate the area under the curve (AUC) for SVM
+AUC_SVM <- auc(ROC_svm)
+
+# Calculate the area under the curve (AUC) for Decision tree
+AUC_Ctree <- auc(ROC_Ctree )
+
+# Calculate the area under the curve (AUC) for Logistic Regression 
+AUC_LogReg <- auc(ROC_LogReg)
+
+#Calculate the area under the curve (AUC) for NaiveBayes
+AUC_NB <- auc(ROC_NB)
+
+#Calculate the area under the curve (AUC) for Random Forest 
+AUC_RF <- auc(ROC_RF)
+
+data.frame(AUC_SVM, AUC_Ctree, AUC_LogReg, AUC_NB,AUC_RF)
+```
+
+
+**Comparing Cumulative Response (Gain) chart**
+
+* Plot Cumulative Response (Gain) chart for logistic regression and SVM models. 
+```{r}
+library(CustomerScoringMetrics)
+
+# Obtain Gain chart values for Logistic Regression
+GainTable_LogReg <- cumGainsTable(logreg_pred, test$class, resolution = 1/100)
+
+# Obtain Gain chart values for SVM
+GainTable_SVM <- cumGainsTable(prob_SVM, test$class, resolution = 1/100)
+
+# Plot the gain chart
+plot(GainTable_LogReg[,4], col="red", type="l",       #plot gain chart for Logistic Regression 
+xlab="Percentage of test instances", ylab="Percentage of correct predictions")
+lines(GainTable_SVM[,4], col="blue", type ="l")       #plot gain chart for SVM
+abline(a = 0, b = 1, col = "lightgray")               #adds a diagonal line for baseline or random model
+legend("bottomright",
+c("Logistic Regression","SVM"),
+fill=c("red","blue"))
+
+```
+
+* Plot Cumulative Response (Gain) chart for logistic regression and Random forest. 
+```{r}
+library(CustomerScoringMetrics)
+
+# Obtain Gain chart values for Logistic Regression
+GainTable_LogReg <- cumGainsTable(logreg_pred, test$class, resolution = 1/100)
+
+# Obtain Gain chart values for Random forest
+GainTable_rf <- cumGainsTable(prob_RF[,2], test$class, resolution = 1/100)
+
+# Plot the gain chart
+plot(GainTable_LogReg[,4], col="red", type="l",       #plot gain chart for Logistic Regression 
+xlab="Percentage of test instances", ylab="Percentage of correct predictions")
+lines(GainTable_rf[,4], col="blue", type ="l")       #plot gain chart for Random Forest
+abline(a = 0, b = 1, col = "lightgray")               #adds a diagonal line for baseline or random model
+legend("bottomright",
+c("Logistic Regression","Random Forest"),
+fill=c("red","blue"))
+
+```
