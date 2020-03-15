@@ -550,7 +550,6 @@ fill=c("red","blue"))
 ```
 
 
-
 **Comparing AUC values**
 
 * Compute AUC values for every models by using `auc()` function. 
@@ -573,7 +572,6 @@ AUC_RF <- auc(ROC_RF)
 data.frame(AUC_SVM, AUC_Ctree, AUC_LogReg, AUC_NB,AUC_RF)
 ```
 
-
 **Comparing Cumulative Response (Gain) chart**
 
 * Plot Cumulative Response (Gain) chart for logistic regression and SVM models. 
@@ -594,7 +592,6 @@ abline(a = 0, b = 1, col = "lightgray")               #adds a diagonal line for 
 legend("bottomright",
 c("Logistic Regression","SVM"),
 fill=c("red","blue"))
-
 ```
 
 * Plot Cumulative Response (Gain) chart for logistic regression and Random forest. 
