@@ -7,7 +7,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
 First of all, we load some of the required packages and import our dataset. Assigning the data set to "bank"
 
 ```{r bank marketing}
@@ -548,7 +547,6 @@ legend("bottomright",                                  # add a legend to show mo
 c("NaiveBayes","Random Forest"),
 fill=c("red","blue"))
 ```
-
 
 **Comparing AUC values**
 
