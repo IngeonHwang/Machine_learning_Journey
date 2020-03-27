@@ -219,7 +219,6 @@ datamodelling$class <- bank.stratified$class  # Add class column to the filtered
 
 ```
 
-
 Next we will test "pdays" for outliers in the same way.
 ```{r}
 # Basic scatter plot of number of days since the client was last contacted from a previous campaign in relation to age
