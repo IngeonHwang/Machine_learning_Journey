@@ -114,9 +114,7 @@ str(bank)
 ggplot(bank, aes(x= age, y= balance)) + geom_point() +
 labs(title="customer age \n in relation to account balance",
        x="Customer Age", y = "Balance (EUR)") 
-
 ```
-
 
 Removing outliers from the balance to increase our model's accuracy by using IQR rule
 In this case, we use 3*IQR to get rid of Extreme outliers
@@ -149,7 +147,6 @@ upper_duration <- qnt_duration[2] + iqt_duration
  
 bank <- subset(bank, bank$duration < upper_duration & bank$balance > lower_duration)
 summary(bank)
-
 ```
 
 Testing "campaign" for outliers in the same way.
