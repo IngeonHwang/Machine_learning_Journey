@@ -19,8 +19,6 @@ library(pROC)
 library(ggplot2) 
 library(DataExplorer)
 library(ROSE)
-
-
 rm(list=ls())
 bank <- read.csv("bank-full.csv", header = TRUE, sep=";")
 ```
